@@ -13,7 +13,7 @@
     <作品>_spread.txt  ルビのない同じ表記で、解析の読みがルビと違う箇所（参考）
     _summary.txt       全作品の集計（ターミナルに出るものと同じ）
 
-必要なもの: pip install fugashi と MeCab 用 UniDic
+必要なもの: pip install fugashi と MeCab 用 UniDic、同じフォルダの aozora_clean.py
 """
 import csv
 import glob
@@ -35,47 +35,18 @@ LEMMA_ID_IDX = 28  # 語彙素IDの素性番号（dicrc の %f[28]）
 # ================================================================
 
 # ---------------------------------------------------------------- 前処理
-KANJI = r"[㐀-䶿一-鿿豈-﫿々〆ヶ〇仝〓]"
-GAIJI_RE = re.compile(r"※［＃[^］]*］")
-NOTE_RE = re.compile(r"［＃[^］]*］")
-GAIJI_MARK = "〓"  # 外字の代用文字（1文字）
+# ルビ・注記の除去と外字の置き換えは、第2段階のプログラム aozora_clean.py と共通にする
+# （このファイルと同じフォルダに aozora_clean.py を置くこと）。
+# 外字 ※［＃…］ は面区点番号・Unicode番号から本来の字に置き換え、字が決まらないものだけ 〓 にする。
+# 位置・行番号は第2段階の出力テキストと一致する。
+import aozora_clean
 
 
 def parse_line(line):
     """1行を (ルビを除いた本文, [(開始, 終了, 親文字, ルビ)]) に分ける。
     位置はルビ除去後の本文での文字位置。"""
-    line = GAIJI_RE.sub(GAIJI_MARK, line)
-    line = NOTE_RE.sub("", line)
-    out = []          # 出力文字
-    rubies = []
-    bar = None        # ｜ の位置（出力側）
-    i = 0
-    while i < len(line):
-        c = line[i]
-        if c == "｜":
-            bar = len(out)
-            i += 1
-            continue
-        if c == "《":
-            j = line.find("》", i)
-            if j < 0:
-                out.append(c); i += 1; continue
-            ruby = line[i + 1:j]
-            end = len(out)
-            if bar is not None:
-                start = bar
-            else:  # 直前の漢字列が親文字
-                start = end
-                while start > 0 and re.match(KANJI, out[start - 1]):
-                    start -= 1
-            if start < end:
-                rubies.append((start, end, "".join(out[start:end]), expand_iteration(ruby)))
-            bar = None
-            i = j + 1
-            continue
-        out.append(c)
-        i += 1
-    return "".join(out), rubies
+    text, rubies = aozora_clean.parse_line(line)
+    return text, [(s, e, base, expand_iteration(ruby)) for s, e, base, ruby in rubies]
 
 
 def expand_iteration(s):
