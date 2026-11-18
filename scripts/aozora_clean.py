@@ -16,7 +16,10 @@
 行番号と行内の文字位置がそのまま対応する。
 
 使い方
-  python aozora_clean.py 入力フォルダ 出力フォルダ
+  下の「設定」で入力フォルダ・出力フォルダを指定してから
+    python aozora_clean.py
+  を実行する。入力フォルダ内のすべての .txt が対象になる。
+  （python aozora_clean.py 入力フォルダ 出力フォルダ のように指定すると、設定より優先される）
 
 出力
   出力フォルダ/<作品>.txt        整えた本文（UTF-8、改行CRLF）
@@ -27,6 +30,11 @@ import re
 import sys
 from collections import Counter
 from pathlib import Path
+
+# ================================================================ 設定
+INPUT_DIR = r"D:/Dropbox/KAKENHI_語彙データ/候補作品_本文のみ"  # 入力フォルダ（第1段階の出力）
+OUTPUT_DIR = r"D:/Dropbox/KAKENHI_語彙データ/候補作品_整形"    # 出力フォルダ
+# ================================================================
 
 # 照合プログラムと同じ定義（KANJI には、外字で入る CJK 拡張B以降の漢字も加えている。
 # 照合プログラムでは外字が 〓 になり漢字扱いされるので、それに合わせるため）
@@ -129,13 +137,21 @@ def read_text(path):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("input_dir")
-    ap.add_argument("output_dir")
+    ap.add_argument("input_dir", nargs="?", default=INPUT_DIR, help="省略時は設定の INPUT_DIR")
+    ap.add_argument("output_dir", nargs="?", default=OUTPUT_DIR, help="省略時は設定の OUTPUT_DIR")
     args = ap.parse_args()
 
     src, dst = Path(args.input_dir), Path(args.output_dir)
+    if not src.is_dir():
+        print(f"入力フォルダが見つかりません: {src}")
+        return 1
     dst.mkdir(parents=True, exist_ok=True)
     files = sorted(p for p in src.glob("*.txt") if not p.name.startswith("_"))
+    if not files:
+        print(f"入力フォルダに .txt がありません: {src}")
+        return 1
+    print(f"入力フォルダ: {src}")
+    print(f"出力フォルダ: {dst}")
     stats = Counter()
     unresolved_rows = []
     for f in files:
