@@ -2,9 +2,19 @@
 """青空文庫テキストのルビと形態素解析結果を照合し、可能なら自動修正する。
 
 使い方:
-    下の「設定」で入力フォルダ・出力フォルダ・辞書フォルダを指定してから
-    python ruby_check.py
+    下の「設定」で入力フォルダ・ルビ表フォルダ・出力フォルダ・辞書フォルダを指定してから
+    python 01_keitaisokaiseki_ruby_autocorret.py
     を実行する。入力フォルダ内のすべての .txt が対象になる。
+
+入力は2通り:
+    (A) RUBY_DIR を指定する（推奨）
+        INPUT_DIR: aozora_clean.py で整えた本文（ルビ・注記なし、外字置き換え済み）
+        RUBY_DIR : aozora_clean.py が出力したルビ表（<作品>.tsv）
+        整えた本文をそのまま形態素解析し、ルビ表と文字位置で照合する。
+    (B) RUBY_DIR = None にする
+        INPUT_DIR: ルビの残ったテキスト（aozora_honbun.py の出力など）
+        このプログラムの中でルビを外してから解析する。
+    どちらでも結果は同じになる。行番号は (A) では整えた本文の、(B) では入力ファイルの行番号。
 
 出力（出力フォルダに作品ごとに作る）:
     <作品>_morphs.txt  解析結果（1行1語、タブ区切り）
@@ -25,7 +35,8 @@ from datetime import datetime
 import fugashi
 
 # ================================================================ 設定
-INPUT_DIR = r"D:/Dropbox/KAKENHI_語彙データ/候補作品"    # 入力フォルダ
+INPUT_DIR = r"D:/Dropbox/KAKENHI_語彙データ/候補作品_整形"    # 入力フォルダ
+RUBY_DIR = r"D:/Dropbox/KAKENHI_語彙データ/候補作品_ルビ表"  # ルビ表フォルダ。None ならルビ付きテキストを入力にする
 OUTPUT_DIR = r"D:/Dropbox/KAKENHI_語彙データ/output"  # 出力フォルダ
 DIC_DIR = r"C:/unidic-cwj-202302_full"  # 辞書フォルダ（sys.dic のある場所）。None なら unidic-lite
 KYU = False      # True: 旧仮名遣いの作品として照合する
@@ -334,13 +345,28 @@ def write(path, header, rows):
 def process_file(path, tagger):
     work = os.path.splitext(os.path.basename(path))[0]
     lines = read_text(path)
-    b0, b1 = body_range(lines)
+    if RUBY_DIR:
+        # (A) 整えた本文とルビ表を読む。本文は全行が対象
+        table_path = os.path.join(RUBY_DIR, work + ".tsv")
+        if not os.path.exists(table_path):
+            raise FileNotFoundError(f"ルビ表がありません: {table_path}")
+        table = aozora_clean.read_ruby_table(table_path)
+        b0, b1 = 0, len(lines)
+    else:
+        b0, b1 = body_range(lines)
 
     tok_rows, ruby_rows, all_tok, ruby_dict = [], [], [], {}
     stats = Counter()
     seq = 0
     for ln in range(b0 + 1, b1 + 1):  # 行番号は元ファイルの行番号
-        text, spans = parse_line(lines[ln - 1])
+        if RUBY_DIR:
+            text = lines[ln - 1]
+            spans = [(s, e, base, expand_iteration(ruby)) for s, e, base, ruby in table.get(ln, [])]
+            for s, e, base, _ in spans:
+                if text[s:e] != base:  # 本文とルビ表の組み合わせが違う
+                    raise ValueError(f"{work} {ln}行目: ルビ表の親文字「{base}」が本文「{text[s:e]}」と合いません")
+        else:
+            text, spans = parse_line(lines[ln - 1])
         if not text.strip():
             continue
         toks = to_toks(text, tagger(text))
@@ -427,12 +453,14 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     files = [p for p in sorted(glob.glob(os.path.join(INPUT_DIR, "*.txt")))
-             if not os.path.splitext(p)[0].endswith(OUT_SUFFIXES)]
+             if not os.path.splitext(p)[0].endswith(OUT_SUFFIXES)
+             and not os.path.basename(p).startswith("_")]  # _gaiji_unresolved.txt などは除く
     if not files:
         print(f"入力フォルダに .txt がありません: {INPUT_DIR}")
         return
     lines = [f"実行日時: {datetime.now():%Y-%m-%d %H:%M}",
              f"入力フォルダ: {INPUT_DIR}",
+             f"ルビ表フォルダ: {RUBY_DIR or '（使わない。入力のルビを外して照合）'}",
              f"辞書: {DIC_DIR or 'unidic-lite'}",
              f"旧仮名遣いとして照合: {'する' if KYU else 'しない'}／N-best: {NBEST}",
              ""]

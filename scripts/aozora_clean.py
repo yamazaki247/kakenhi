@@ -24,6 +24,11 @@
 出力
   出力フォルダ/<作品>.txt        整えた本文（UTF-8、改行CRLF）
   出力フォルダ/_gaiji_unresolved.txt  字が決まらず 〓 にした外字の一覧（作品・行・注記）
+  ルビ表フォルダ/<作品>.tsv      削除したルビの表（UTF-8、タブ区切り）
+      行 開始 終了 親文字 ルビ
+      行・開始・終了は、整えた本文での行番号（1から）と行内の文字位置（0から）。
+      ルビは元のまま（ゝ・ゞ の展開はしていない）。
+      ルビ照合のプログラムは、整えた本文とこの表を読んで照合する。
 """
 import argparse
 import re
@@ -34,7 +39,10 @@ from pathlib import Path
 # ================================================================ 設定
 INPUT_DIR = r"D:/Dropbox/KAKENHI_語彙データ/候補作品_本文のみ"  # 入力フォルダ（第1段階の出力）
 OUTPUT_DIR = r"D:/Dropbox/KAKENHI_語彙データ/候補作品_整形"    # 出力フォルダ
+RUBY_DIR = r"D:/Dropbox/KAKENHI_語彙データ/候補作品_ルビ表"    # ルビ表の出力フォルダ
 # ================================================================
+
+RUBY_TABLE_HEADER = ["行", "開始", "終了", "親文字", "ルビ"]
 
 # 照合プログラムと同じ定義（KANJI には、外字で入る CJK 拡張B以降の漢字も加えている。
 # 照合プログラムでは外字が 〓 になり漢字扱いされるので、それに合わせるため）
@@ -135,36 +143,63 @@ def read_text(path):
     return raw.decode("cp932", errors="replace").splitlines()
 
 
+def write_ruby_table(path, rows):
+    """ルビ表を書く。rows は (行, 開始, 終了, 親文字, ルビ) の列。"""
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write("\t".join(RUBY_TABLE_HEADER) + "\n")
+        for r in rows:
+            f.write("\t".join(str(x) for x in r) + "\n")
+
+
+def read_ruby_table(path):
+    """ルビ表を読み、{行: [(開始, 終了, 親文字, ルビ), ...]} を返す。"""
+    table = {}
+    with open(path, encoding="utf-8") as f:
+        next(f)  # 見出し
+        for line in f:
+            line = line.rstrip("\r\n")
+            if not line:
+                continue
+            ln, s, e, base, ruby = line.split("\t")
+            table.setdefault(int(ln), []).append((int(s), int(e), base, ruby))
+    return table
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input_dir", nargs="?", default=INPUT_DIR, help="省略時は設定の INPUT_DIR")
     ap.add_argument("output_dir", nargs="?", default=OUTPUT_DIR, help="省略時は設定の OUTPUT_DIR")
+    ap.add_argument("ruby_dir", nargs="?", default=RUBY_DIR, help="省略時は設定の RUBY_DIR")
     args = ap.parse_args()
 
-    src, dst = Path(args.input_dir), Path(args.output_dir)
+    src, dst, rdir = Path(args.input_dir), Path(args.output_dir), Path(args.ruby_dir)
     if not src.is_dir():
         print(f"入力フォルダが見つかりません: {src}")
         return 1
     dst.mkdir(parents=True, exist_ok=True)
+    rdir.mkdir(parents=True, exist_ok=True)
     files = sorted(p for p in src.glob("*.txt") if not p.name.startswith("_"))
     if not files:
         print(f"入力フォルダに .txt がありません: {src}")
         return 1
     print(f"入力フォルダ: {src}")
     print(f"出力フォルダ: {dst}")
+    print(f"ルビ表フォルダ: {rdir}")
     stats = Counter()
     unresolved_rows = []
     for f in files:
-        out_lines = []
+        out_lines, ruby_rows = [], []
         for ln, line in enumerate(read_text(f), 1):
             stats["外字"] += line.count("※［＃")
             unresolved = []
             text, rubies = parse_line(line, unresolved)
             stats["ルビ"] += len(rubies)
+            ruby_rows.extend((ln, s, e, base, ruby) for s, e, base, ruby in rubies)
             for note in unresolved:
                 unresolved_rows.append(f"{f.stem}\t{ln}\t※［＃{note}］")
             out_lines.append(text)
         (dst / f.name).write_bytes(("\r\n".join(out_lines) + "\r\n").encode("utf-8"))
+        write_ruby_table(rdir / (f.stem + ".tsv"), ruby_rows)
 
     (dst / "_gaiji_unresolved.txt").write_text(
         "作品\t行\t注記\n" + "".join(r + "\n" for r in unresolved_rows), encoding="utf-8")
